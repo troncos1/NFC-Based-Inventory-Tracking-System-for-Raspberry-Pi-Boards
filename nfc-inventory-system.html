@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NFC-Based Inventory Tracking System for Raspberry Pi Boards</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #2980b9;
+            margin-top: 25px;
+            border-left: 5px solid #3498db;
+            padding-left: 10px;
+        }
+        pre {
+            background-color: #f5f5f5;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+        code {
+            font-family: 'Courier New', Courier, monospace;
+        }
+        ul, ol {
+            padding-left: 25px;
+        }
+        .step {
+            background-color: #f9f9f9;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <h1>NFC-Based Inventory Tracking System for Raspberry Pi Boards</h1>
+    <p>A step-by-step procedure for implementing an NFC-based inventory tracking system for your Raspberry Pi boards. This system will track whether the boards are inside or outside your hacking lab using NFC stickers, an ESP32 with an NFC sensor, and a Raspberry Pi 4 for the database.</p>
+
+    <div class="step">
+        <h2>Step 1: Gather Required Hardware and Components</h2>
+        <ul>
+            <li>Raspberry Pi 4 (for the database server)</li>
+            <li>ESP32 development board</li>
+            <li>PN532 NFC module (compatible with ESP32)</li>
+            <li>NFC stickers (enough for all your Raspberry Pi boards)</li>
+            <li>Micro SD card for Raspberry Pi 4</li>
+            <li>Power supplies for both ESP32 and Raspberry Pi 4</li>
+            <li>Connecting wires/jumper cables</li>
+            <li>Optional: case for the ESP32 and NFC reader</li>
+        </ul>
+    </div>
+
+    <div class="step">
+        <h2>Step 2: Set Up the Raspberry Pi 4 Database Server</h2>
+        <ol>
+            <li>Install Raspberry Pi OS on the SD card</li>
+            <li>Boot up and configure the Raspberry Pi 4</li>
+            <li>Install required software:
+                <pre><code>sudo apt update
+sudo apt upgrade
+sudo apt install mariadb-server python3-pip</code></pre>
+            </li>
+            <li>Secure your MySQL/MariaDB installation:
+                <pre><code>sudo mysql_secure_installation</code></pre>
+            </li>
+            <li>Create a database for the inventory:
+                <pre><code>sudo mysql -u root -p
+CREATE DATABASE inventory_db;
+CREATE USER 'inventory_user'@'localhost' IDENTIFIED BY 'your_password';
+GRANT ALL PRIVILEGES ON inventory_db.* TO 'inventory_user'@'localhost';
+FLUSH PRIVILEGES;
+EXIT;</code></pre>
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 3: Design and Create the Database Schema</h2>
+        <ol>
+            <li>Connect to the database:
+                <pre><code>mysql -u inventory_user -p inventory_db</code></pre>
+            </li>
+            <li>Create a table for tracking the Raspberry Pi boards:
+                <pre><code>CREATE TABLE raspberry_boards (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  board_name VARCHAR(50) NOT NULL,
+  nfc_id VARCHAR(50) UNIQUE NOT NULL,
+  status ENUM('in_lab', 'out_lab') DEFAULT 'in_lab',
+  last_scanned DATETIME,
+  last_location VARCHAR(100),
+  notes TEXT
+);</code></pre>
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 4: Set Up the ESP32 with NFC Reader</h2>
+        <ol>
+            <li>Wire the PN532 NFC module to the ESP32:
+                <ul>
+                    <li>Connect VCC to 3.3V</li>
+                    <li>Connect GND to GND</li>
+                    <li>Connect SCL to GPIO22</li>
+                    <li>Connect SDA to GPIO21</li>
+                    <li>(Adjust pins if using SPI instead of I2C)</li>
+                </ul>
+            </li>
+            <li>Install the Arduino IDE and required libraries:
+                <ul>
+                    <li>Install the ESP32 board in Arduino IDE</li>
+                    <li>Install the Adafruit PN532 library</li>
+                    <li>Install WiFi and MQTT libraries</li>
+                </ul>
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 5: Program the ESP32</h2>
+        <ol>
+            <li>Create a new Arduino sketch for the ESP32 with code to:
+                <ul>
+                    <li>Connect to WiFi</li>
+                    <li>Initialize the NFC reader</li>
+                    <li>Read NFC tag IDs</li>
+                    <li>Connect to the Raspberry Pi server</li>
+                    <li>Send NFC ID data when a tag is detected</li>
+                </ul>
+            </li>
+            <li>Basic code structure:
+                <pre><code>#include &lt;Wire.h&gt;
+#include &lt;SPI.h&gt;
+#include &lt;Adafruit_PN532.h&gt;
+#include &lt;WiFi.h&gt;
+#include &lt;HTTPClient.h&gt;
+
+// Define pins
+#define PN532_IRQ   (2)
+#define PN532_RESET (3)
+
+// NFC reader setup
+Adafruit_PN532 nfc(PN532_IRQ, PN532_RESET);
+
+// WiFi credentials
+const char* ssid = "YourWiFiSSID";
+const char* password = "YourWiFiPassword";
+
+// Server details
+const char* serverName = "http://raspberry-pi-ip-address/update_inventory.php";
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Initialize NFC
+  nfc.begin();
+  uint32_t versiondata = nfc.getFirmwareVersion();
+  if (!versiondata) {
+    Serial.println("Didn't find PN53x board");
+    while (1); // Halt
+  }
+  
+  // Connect to WiFi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected");
+  
+  // Configure NFC to read RFID tags
+  nfc.SAMConfig();
+}
+
+void loop() {
+  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };
+  uint8_t uidLength;
+  
+  // Check for NFC tags
+  if (nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength)) {
+    String tagID = "";
+    for (uint8_t i = 0; i < uidLength; i++) {
+      tagID += String(uid[i], HEX);
+    }
+    
+    // Send data to server
+    if(WiFi.status() == WL_CONNECTED) {
+      HTTPClient http;
+      http.begin(serverName);
+      http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+      
+      String httpRequestData = "nfc_id=" + tagID + "&location=entry_scanner";
+      int httpResponseCode = http.POST(httpRequestData);
+      
+      Serial.print("HTTP Response code: ");
+      Serial.println(httpResponseCode);
+      
+      http.end();
+    }
+    
+    delay(1000); // Wait before reading the same tag again
+  }
+  
+  delay(500); // Poll every 500ms
+}</code></pre>
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 6: Create a Web Interface on the Raspberry Pi</h2>
+        <ol>
+            <li>Install a web server:
+                <pre><code>sudo apt install apache2 php php-mysql</code></pre>
+            </li>
+            <li>Create a PHP script to handle NFC updates:
+                <pre><code>sudo nano /var/www/html/update_inventory.php</code></pre>
+            </li>
+            <li>Add the following code:
+                <pre><code>&lt;?php
+// Database connection
+$servername = "localhost";
+$username = "inventory_user";
+$password = "your_password";
+$dbname = "inventory_db";
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+if ($conn->connect_error) {
+  die("Connection failed: " . $conn->connect_error);
+}
+
+// Get data from request
+$nfc_id = $_POST['nfc_id'];
+$location = $_POST['location'];
+
+// Determine status based on location
+$status = ($location == "entry_scanner") ? "in_lab" : "out_lab";
+
+// Update database
+$stmt = $conn->prepare("UPDATE raspberry_boards SET status = ?, last_scanned = NOW(), last_location = ? WHERE nfc_id = ?");
+$stmt->bind_param("sss", $status, $location, $nfc_id);
+
+if ($stmt->execute()) {
+  echo "Record updated successfully";
+} else {
+  echo "Error updating record: " . $conn->error;
+}
+
+$stmt->close();
+$conn->close();
+?&gt;</code></pre>
+            </li>
+            <li>Create a dashboard to view the inventory:
+                <pre><code>sudo nano /var/www/html/index.php</code></pre>
+            </li>
+            <li>Add dashboard code:
+                <pre><code>&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;Raspberry Pi Inventory&lt;/title&gt;
+  &lt;style&gt;
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 8px; text-align: left; border-bottom: 1px solid #ddd; }
+    .in_lab { color: green; }
+    .out_lab { color: red; }
+  &lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Raspberry Pi Inventory&lt;/h1&gt;
+  &lt;table&gt;
+    &lt;tr&gt;
+      &lt;th&gt;ID&lt;/th&gt;
+      &lt;th&gt;Board Name&lt;/th&gt;
+      &lt;th&gt;NFC ID&lt;/th&gt;
+      &lt;th&gt;Status&lt;/th&gt;
+      &lt;th&gt;Last Scanned&lt;/th&gt;
+      &lt;th&gt;Last Location&lt;/th&gt;
+      &lt;th&gt;Notes&lt;/th&gt;
+    &lt;/tr&gt;
+    &lt;?php
+    // Database connection
+    $servername = "localhost";
+    $username = "inventory_user";
+    $password = "your_password";
+    $dbname = "inventory_db";
+    
+    $conn = new mysqli($servername, $username, $password, $dbname);
+    if ($conn->connect_error) {
+      die("Connection failed: " . $conn->connect_error);
+    }
+    
+    $sql = "SELECT * FROM raspberry_boards";
+    $result = $conn->query($sql);
+    
+    if ($result->num_rows > 0) {
+      while($row = $result->fetch_assoc()) {
+        echo "&lt;tr&gt;";
+        echo "&lt;td&gt;" . $row["id"] . "&lt;/td&gt;";
+        echo "&lt;td&gt;" . $row["board_name"] . "&lt;/td&gt;";
+        echo "&lt;td&gt;" . $row["nfc_id"] . "&lt;/td&gt;";
+        echo "&lt;td class='" . $row["status"] . "'&gt;" . $row["status"] . "&lt;/td&gt;";
+        echo "&lt;td&gt;" . $row["last_scanned"] . "&lt;/td&gt;";
+        echo "&lt;td&gt;" . $row["last_location"] . "&lt;/td&gt;";
+        echo "&lt;td&gt;" . $row["notes"] . "&lt;/td&gt;";
+        echo "&lt;/tr&gt;";
+      }
+    } else {
+      echo "&lt;tr&gt;&lt;td colspan='7'&gt;No boards found&lt;/td&gt;&lt;/tr&gt;";
+    }
+    $conn->close();
+    ?&gt;
+  &lt;/table&gt;
+  
+  &lt;h2&gt;Register New Board&lt;/h2&gt;
+  &lt;form action="register_board.php" method="post"&gt;
+    &lt;label for="board_name"&gt;Board Name:&lt;/label&gt;
+    &lt;input type="text" id="board_name" name="board_name" required&gt;&lt;br&gt;&lt;br&gt;
+    
+    &lt;label for="nfc_id"&gt;NFC ID:&lt;/label&gt;
+    &lt;input type="text" id="nfc_id" name="nfc_id" required&gt;&lt;br&gt;&lt;br&gt;
+    
+    &lt;label for="notes"&gt;Notes:&lt;/label&gt;
+    &lt;textarea id="notes" name="notes"&gt;&lt;/textarea&gt;&lt;br&gt;&lt;br&gt;
+    
+    &lt;input type="submit" value="Register"&gt;
+  &lt;/form&gt;
+&lt;/body&gt;
+&lt;/html&gt;</code></pre>
+            </li>
+            <li>Create a script to register new boards:
+                <pre><code>sudo nano /var/www/html/register_board.php</code></pre>
+            </li>
+            <li>Add registration code:
+                <pre><code>&lt;?php
+// Database connection
+$servername = "localhost";
+$username = "inventory_user";
+$password = "your_password";
+$dbname = "inventory_db";
+
+$conn = new mysqli($servername, $username, $password, $dbname);
+if ($conn->connect_error) {
+  die("Connection failed: " . $conn->connect_error);
+}
+
+// Get form data
+$board_name = $_POST['board_name'];
+$nfc_id = $_POST['nfc_id'];
+$notes = $_POST['notes'];
+
+// Insert new board
+$stmt = $conn->prepare("INSERT INTO raspberry_boards (board_name, nfc_id, notes) VALUES (?, ?, ?)");
+$stmt->bind_param("sss", $board_name, $nfc_id, $notes);
+
+if ($stmt->execute()) {
+  header("Location: index.php");
+} else {
+  echo "Error: " . $stmt->error;
+}
+
+$stmt->close();
+$conn->close();
+?&gt;</code></pre>
+            </li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 7: Set Up NFC Stickers on Raspberry Pi Boards</h2>
+        <ol>
+            <li>Create a simple script on the Raspberry Pi 4 to read NFC IDs for registration:
+                <pre><code>import RPi.GPIO as GPIO
+from mfrc522 import SimpleMFRC522
+
+reader = SimpleMFRC522()
+
+try:
+  print("Hold an NFC tag near the reader to read its ID")
+  id, text = reader.read()
+  print("ID: %s" % id)
+
+finally:
+  GPIO.cleanup()</code></pre>
+            </li>
+            <li>Run this script to read each NFC sticker's ID</li>
+            <li>Place the NFC sticker on each Raspberry Pi board</li>
+            <li>Use the dashboard to register each board with its NFC ID</li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 8: Install the ESP32 + NFC Reader at Entry/Exit Points</h2>
+        <ol>
+            <li>Place the ESP32 with NFC reader at the lab entrance/exit</li>
+            <li>Connect it to power and ensure it has WiFi access</li>
+            <li>Consider installing multiple readers if you have several entry/exit points</li>
+            <li>Create a protective case for the ESP32 and NFC reader</li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 9: Test the System</h2>
+        <ol>
+            <li>Ensure the ESP32 is connected to WiFi and the Raspberry Pi server</li>
+            <li>Verify that NFC tags are detected when boards pass through the entry/exit</li>
+            <li>Check that the database is updating correctly</li>
+            <li>Test the dashboard to verify it shows current status</li>
+        </ol>
+    </div>
+
+    <div class="step">
+        <h2>Step 10: Implement Additional Features (Optional)</h2>
+        <ol>
+            <li>Add user authentication to the dashboard</li>
+            <li>Set up email alerts for unauthorized removals</li>
+            <li>Create a mobile app for inventory checking</li>
+            <li>Add a history tracking feature to see movement patterns</li>
+            <li>Implement a check-out system where users can register when they take a board</li>
+        </ol>
+    </div>
+
+    <p>By following these steps, you'll have a complete NFC-based inventory tracking system for your Raspberry Pi boards that automatically updates their status as they enter or leave the hacking lab.</p>
+</body>
+</html>
